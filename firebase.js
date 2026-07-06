@@ -1,5 +1,5 @@
 import { initializeApp } from "https://www.gstatic.com/firebasejs/10.7.1/firebase-app.js";
-import { getFirestore, enableIndexedDbPersistence } from "https://www.gstatic.com/firebasejs/10.7.1/firebase-firestore.js";
+import { getFirestore, CACHE_SIZE_UNLIMITED, persistentLocalCache, persistentSingleTabManager } from "https://www.gstatic.com/firebasejs/10.7.1/firebase-firestore.js";
 
 const firebaseConfig = {
   apiKey: "AIzaSyC8JlyrUvdTZUhdeBuevdWvmtx9i0kQchE",
@@ -12,9 +12,7 @@ const firebaseConfig = {
 
 const validateConfig = (config) => {
     for (const key in config) {
-        if (!config[key] || config[key].includes("RENDER_")) {
-            throw new Error(`Configuración de Firebase inválida: ${key} está vacío.`);
-        }
+        if (!config[key]) throw new Error(`Configuración de Firebase inválida: ${key} está vacío.`);
     }
 };
 
@@ -22,14 +20,18 @@ let app, db;
 try {
     validateConfig(firebaseConfig);
     app = initializeApp(firebaseConfig);
-    db = getFirestore(app);
-    enableIndexedDbPersistence(db).catch((err) => {
-        if (err.code == 'failed-precondition') console.warn("Persistencia: múltiples pestañas abiertas");
-        else if (err.code == 'unimplemented') console.warn("Persistencia no soportada");
+    db = getFirestore(app, {
+        localCache: persistentLocalCache({
+            cacheSizeBytes: CACHE_SIZE_UNLIMITED,
+            tabManager: persistentSingleTabManager()
+        })
     });
 } catch (error) {
-    document.getElementById('firebase-error').classList.remove('hidden');
-    document.getElementById('firebase-error').innerHTML = `<h3>Error de Configuración</h3><p>${error.message}</p>`;
+    const errorDiv = document.getElementById('firebase-error');
+    if(errorDiv) {
+        errorDiv.classList.remove('hidden');
+        errorDiv.innerHTML = `<h3>Error de Configuración</h3><p>${error.message}</p>`;
+    }
     console.error(error);
 }
 
