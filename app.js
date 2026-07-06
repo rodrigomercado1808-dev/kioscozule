@@ -1,11 +1,16 @@
 import { db } from './firebase.js';
 import { collection, addDoc, updateDoc, deleteDoc, doc, onSnapshot, getDocs, runTransaction, serverTimestamp, query } from "https://www.gstatic.com/firebasejs/10.7.1/firebase-firestore.js";
 import { $, debounce, formatPrice, showToast, setLoading } from './utils.js';
+import { renderCajaData, generateSaleCode } from './sales.js';
+import Scanner from './scanner.js';
 
 const COL_PROD = "productos", COL_VENTAS = "ventas", COL_BACKUPS = "backups";
 const STOCK_MINIMO = 5;
 let products = [], cart = [], unsubscribeProducts, isScannerRunning = false;
 let unsubscribeVentas = null;
+let lastVentasCache = [];
+let dayStarted = false;
+let currentDayKey = null;
 
 // --- EVENTOS ---
 function setupEventListeners() {
@@ -43,9 +48,17 @@ function setupEventListeners() {
     $('form-product').onsubmit = saveProduct;
     $('btn-clear-cart').onclick = () => { cart = []; renderCart(); };
     $('btn-checkout').onclick = checkout;
-    $('btn-scan-venta').onclick = () => startScanner('venta');
-    $('btn-scan-modal').onclick = () => startScanner('modal');
-    $('btn-close-camera').onclick = stopScanner;
+    $('btn-scan-venta').onclick = () => {
+        $('camera-overlay').classList.remove('hidden');
+        Scanner.setDetectedCallback(({code,type})=> onScannerDetected(code, type, 'venta'));
+        Scanner.start({ target: document.getElementById('interactive'), continuous: false, sound: true, vibrate: true });
+    };
+    $('btn-scan-modal').onclick = () => {
+        $('camera-overlay').classList.remove('hidden');
+        Scanner.setDetectedCallback(({code,type})=> onScannerDetected(code, type, 'modal'));
+        Scanner.start({ target: document.getElementById('interactive'), continuous: false, sound: true, vibrate: true });
+    };
+    $('btn-close-camera').onclick = () => { Scanner.stop(); $('camera-overlay').classList.add('hidden'); };
     // hamburger menu toggle for mobile
     const btnMenu = $('btn-menu'); const mainNav = $('main-nav');
     if(btnMenu && mainNav){
@@ -91,12 +104,27 @@ function setupEventListeners() {
     $('btn-backup-manual').onclick = () => createBackup('manual');
     $('btn-restore').onclick = () => $('file-restore').click();
     $('file-restore').onchange = handleRestore;
+    const btnStartDay = $('btn-start-day'); if(btnStartDay) btnStartDay.onclick = () => startDay();
     const btnRefreshCaja = $('btn-refresh-caja'); if(btnRefreshCaja) btnRefreshCaja.onclick = ()=> renderCaja();
+    const btnSaveDay = $('btn-save-day'); if(btnSaveDay) btnSaveDay.onclick = () => saveDayBackup();
+    const btnEndDay = $('btn-end-day'); if(btnEndDay) btnEndDay.onclick = () => finalizeDay();
+    const selBackups = $('select-backups'); if(selBackups) selBackups.onchange = ()=> {/* selection changed */};
+    const btnLoadBackup = $('btn-load-backup'); if(btnLoadBackup) btnLoadBackup.onclick = () => viewSelectedBackup();
+    const btnDownloadBackup = $('btn-download-backup'); if(btnDownloadBackup) btnDownloadBackup.onclick = () => downloadDisplayedBackup();
+    const btnHideBackupConsole = $('btn-hide-backup-console'); if(btnHideBackupConsole) btnHideBackupConsole.onclick = () => { $('backup-console').classList.add('hidden'); $('backup-content').innerText = ''; };
+    // caja filters: re-render when filters change
+    const searchCaja = $('search-caja'); if(searchCaja) searchCaja.oninput = debounce(()=> renderCajaData(lastVentasCache), 300);
+    ['filter-today','filter-week','filter-month','filter-from','filter-to','filter-sort'].forEach(id=>{
+        const el = $(id); if(!el) return; el.onchange = ()=> renderCajaData(lastVentasCache);
+    });
 };
 
 // --- INIT ---
 function init() {
     setupEventListeners();
+    loadDayState();
+    // populate backups selector
+    loadBackupsSelect().catch(()=>{});
     unsubscribeProducts = onSnapshot(collection(db, COL_PROD), snap => {
         products = snap.docs.map(d => ({ id: d.id,...d.data() }));
         renderInventory(); renderCart();
@@ -104,6 +132,20 @@ function init() {
     window.addEventListener('beforeunload', autoBackup);
 }
 init();
+
+// --- PWA: service worker registration and install prompt ---
+if('serviceWorker' in navigator){
+    navigator.serviceWorker.register('/sw.js').then(reg => console.log('SW registered', reg)).catch(err => console.warn('SW failed', err));
+}
+
+let deferredInstallPrompt = null;
+window.addEventListener('beforeinstallprompt', (e)=>{
+    e.preventDefault(); deferredInstallPrompt = e; const btn = $('btn-install'); if(btn){ btn.classList.remove('hidden'); btn.onclick = async ()=>{
+        btn.disabled = true; deferredInstallPrompt.prompt(); const choice = await deferredInstallPrompt.userChoice; if(choice.outcome === 'accepted') showToast('Instalación aceptada'); else showToast('Instalación cancelada','warning'); deferredInstallPrompt = null; btn.classList.add('hidden'); btn.disabled = false;
+    }}
+});
+
+window.addEventListener('appinstalled', ()=>{ showToast('Kiosco Zule instalado'); const btn = $('btn-install'); if(btn) btn.classList.add('hidden'); });
 
 // --- NAV ---
 function switchSection(section) {
@@ -113,6 +155,63 @@ function switchSection(section) {
     });
     if(section === 'backups') renderBackupHistory();
     if(section === 'caja') renderCaja();
+}
+
+function getTodayKey(){
+    const now = new Date();
+    return `${now.getFullYear()}-${String(now.getMonth()+1).padStart(2,'0')}-${String(now.getDate()).padStart(2,'0')}`;
+}
+
+function saveDayState(){ if(currentDayKey) localStorage.setItem('currentDayKey', currentDayKey); }
+function clearDayState(){ currentDayKey = null; dayStarted = false; localStorage.removeItem('currentDayKey'); updateDayButtons(); }
+function loadDayState(){ currentDayKey = localStorage.getItem('currentDayKey'); dayStarted = Boolean(currentDayKey); updateDayButtons(); }
+
+function updateDayButtons(){
+    const btnStart = $('btn-start-day');
+    const btnEnd = $('btn-end-day');
+    if(btnStart){
+        btnStart.innerHTML = dayStarted ? '<i data-lucide="refresh-ccw"></i> Día iniciado' : '<i data-lucide="play-circle"></i> Iniciar día';
+        btnStart.classList.toggle('btn-success', !dayStarted);
+        btnStart.classList.toggle('btn-secondary', dayStarted);
+    }
+    if(btnEnd) btnEnd.disabled = !dayStarted;
+    lucide.createIcons && lucide.createIcons();
+}
+
+async function startDay(){
+    if(dayStarted){ showToast('Ya hay un día iniciado', 'warning'); return; }
+    currentDayKey = getTodayKey();
+    dayStarted = true;
+    saveDayState();
+    cart = [];
+    renderCart();
+    resetDaySession();
+    showToast(`Día iniciado: ${currentDayKey}`, 'success');
+    await addDoc(collection(db, COL_BACKUPS), { dayKey: currentDayKey, tipo: 'day_start', createdAt: new Date().toISOString(), version: '1.0.0' });
+    updateDayButtons();
+}
+
+async function finalizeDay(){
+    if(!dayStarted){ showToast('Debes iniciar el día antes de finalizarlo', 'error'); return; }
+    if(!confirm('¿Finalizar el día actual? Esto creará el backup y limpiará la sesión.')) return;
+    const endedDayKey = currentDayKey;
+    await saveDayBackup('final');
+    clearDayState();
+    resetDaySession();
+    showToast(`Día finalizado: ${endedDayKey}`, 'success');
+}
+
+function resetDaySession(){
+    cart = [];
+    renderCart();
+    ['search-venta','search-caja','filter-from','filter-to','select-backups'].forEach(id=>{
+        const el = $(id); if(!el) return;
+        if(el.tagName === 'INPUT' || el.tagName === 'SELECT') el.value = '';
+    });
+    const backupContent = $('backup-content'); if(backupContent) backupContent.innerText = '';
+    const backupConsole = $('backup-console'); if(backupConsole) backupConsole.classList.add('hidden');
+    renderCaja();
+    renderInventory();
 }
 
 // --- CRUD CON VALIDACIONES ---
@@ -263,7 +362,8 @@ async function checkout() {
                 transaction.update(prodRef, { stock: newStock });
             }
             const ventaRef = doc(collection(db, COL_VENTAS));
-            transaction.set(ventaRef, { items: cart.map(i=>({id:i.id,nombre:i.nombre,precio:i.precio,cantidad:i.cantidad})), total: cart.reduce((a,i)=>a+i.precio*i.cantidad,0), fecha: serverTimestamp() });
+            const saleCode = generateSaleCode();
+            transaction.set(ventaRef, { saleCode, items: cart.map(i=>({id:i.id,nombre:i.nombre,precio:i.precio,cantidad:i.cantidad})), total: cart.reduce((a,i)=>a+i.precio*i.cantidad,0), fecha: serverTimestamp() });
         });
         showToast("Venta realizada con éxito"); cart = [];
     } catch(err) { showToast("Error en venta: " + err.message, 'error'); }
@@ -271,48 +371,32 @@ async function checkout() {
 }
 
 // --- ESCANER ---
-function startScanner(target) {
-    if(isScannerRunning) return;
-    isScannerRunning = true; $('camera-overlay').classList.remove('hidden');
-    Quagga.init({
-        inputStream: { name: "Live", type: "LiveStream", target: $('#interactive'), constraints: { facingMode: "environment", width: 640 } },
-        decoder: { readers: ["ean_reader", "ean_8_reader", "code_128_reader", "upc_reader", "upc_e_reader"] },
-        locate: true
-    }, err => { if(err) { showToast(err.message, 'error'); stopScanner(); } else Quagga.start(); });
 
-    Quagga.onDetected(onDetected);
-    function onDetected(data){
-        if(!isScannerRunning) return;
-        const code = data.codeResult.code;
-        if(navigator.vibrate) navigator.vibrate(200);
-        stopScanner();
-        if(target === 'modal') {
-            // fill code but require user to press guardar
-            $('prod-code').value = code;
+function onScannerDetected(code, type, target){
+    try{
+        Scanner.stop();
+        $('camera-overlay').classList.add('hidden');
+        if(target === 'modal') { $('prod-code').value = code; return; }
+        const product = products.find(p => p.codigo === code);
+        const scanModal = $('modal-scan-confirm');
+        const body = $('scan-modal-body');
+        const addBtn = $('scan-modal-add');
+        const createBtn = $('scan-modal-create');
+        const cancelBtn = $('scan-modal-cancel');
+        if(product){
+            body.innerHTML = `<p><strong>${product.nombre}</strong><br>Tipo: ${type}<br>Código: ${product.codigo}<br>Precio: ${formatPrice(product.precio)}<br>Stock: ${product.stock}</p>`;
+            createBtn.classList.add('hidden');
+            addBtn.onclick = ()=>{ if(confirm(`Agregar ${product.nombre} al carrito? (stock: ${product.stock})`)) addToCart(product); scanModal.classList.add('hidden'); };
         } else {
-            const product = products.find(p => p.codigo === code);
-            // Show scan confirmation modal to avoid automatic actions
-            const scanModal = $('modal-scan-confirm');
-            const body = $('scan-modal-body');
-            const addBtn = $('scan-modal-add');
-            const createBtn = $('scan-modal-create');
-            const cancelBtn = $('scan-modal-cancel');
-            if(product) {
-                body.innerHTML = `<p><strong>${product.nombre}</strong><br>Código: ${product.codigo}<br>Precio: ${formatPrice(product.precio)}<br>Stock: ${product.stock}</p>`;
-                createBtn.classList.add('hidden');
-                addBtn.onclick = ()=>{ if(confirm(`Confirmar agregar ${product.nombre}?`)) addToCart(product); scanModal.classList.add('hidden'); };
-            } else {
-                body.innerHTML = `<p>No existe producto con código <strong>${code}</strong>.</p><p>¿Deseas crear uno manualmente?</p>`;
-                createBtn.classList.remove('hidden');
-                addBtn.onclick = ()=>{ showToast('No hay producto para agregar', 'error'); };
-                createBtn.onclick = ()=>{ scanModal.classList.add('hidden'); switchSection('inventario'); $('btn-add-product').click(); $('prod-code').value = code; };
-            }
-            cancelBtn.onclick = ()=> scanModal.classList.add('hidden');
-            scanModal.classList.remove('hidden');
+            body.innerHTML = `<p>No existe producto con código <strong>${code}</strong> (tipo: ${type}).</p><p>¿Crear producto manualmente?</p>`;
+            createBtn.classList.remove('hidden');
+            addBtn.onclick = ()=>{ showToast('No hay producto para agregar', 'error'); };
+            createBtn.onclick = ()=>{ scanModal.classList.add('hidden'); switchSection('inventario'); $('btn-add-product').click(); $('prod-code').value = code; };
         }
-    }
+        cancelBtn.onclick = ()=> scanModal.classList.add('hidden');
+        scanModal.classList.remove('hidden');
+    }catch(err){ console.error(err); }
 }
-function stopScanner() { if(isScannerRunning){ Quagga.stop(); Quagga.offDetected(); isScannerRunning = false; } $('camera-overlay').classList.add('hidden'); }
 
 // --- BACKUPS ---
 async function createBackup(type='manual') {
@@ -330,19 +414,96 @@ async function createBackup(type='manual') {
         const blob = new Blob([JSON.stringify(backup, null, 2)], {type: 'application/json'});
         const a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = `backup-${Date.now()}.json`; a.click();
         showToast("Backup creado y descargado");
+        await loadBackupsSelect();
     } catch(err) { showToast("Error backup: " + err.message, 'error'); }
     finally { setLoading(false); }
 }
 
+// Guarda solo la información del día actual (ventas del día + snapshot productos)
+async function saveDayBackup(type='day'){
+    if(type === 'day' && !dayStarted) {
+        showToast('Inicia el día antes de guardar la información', 'error');
+        return false;
+    }
+    setLoading(true);
+    try{
+        const [prodSnap, ventasSnap] = await Promise.all([getDocs(collection(db, COL_PROD)), getDocs(collection(db, COL_VENTAS))]);
+        const today = new Date();
+        const yyyy = today.getFullYear(); const mm = String(today.getMonth()+1).padStart(2,'0'); const dd = String(today.getDate()).padStart(2,'0');
+        const dayKey = `${yyyy}-${mm}-${dd}`;
+        const ventasAll = ventasSnap.docs.map(d=>({id:d.id,...d.data()}));
+        const ventasDia = ventasAll.filter(v=>{
+            const date = v.fecha && v.fecha.toDate ? v.fecha.toDate() : new Date(v.fecha);
+            const y = date.getFullYear(); const m = String(date.getMonth()+1).padStart(2,'0'); const d = String(date.getDate()).padStart(2,'0');
+            return `${y}-${m}-${d}` === dayKey;
+        });
+        const backup = {
+            fechaDia: dayKey,
+            createdAt: new Date().toISOString(),
+            ventasDia,
+            productosSnapshot: prodSnap.docs.map(d=>({id:d.id,...d.data()})),
+            tipo: type,
+            finalizado: type === 'final',
+            version: '1.0.0'
+        };
+        await addDoc(collection(db, COL_BACKUPS), backup);
+        const blob = new Blob([JSON.stringify(backup, null, 2)], {type: 'application/json'});
+        const filename = type === 'final' ? `backup-final-${dayKey}.json` : `backup-day-${dayKey}.json`;
+        const a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = filename; a.click();
+        showToast(type === 'final' ? 'Día finalizado y backup descargado' : 'Backup del día creado y descargado');
+        await loadBackupsSelect();
+        return true;
+    }catch(err){ showToast('Error backup día: ' + err.message, 'error'); return false; }
+    finally{ setLoading(false); }
+}
+
+async function loadBackupsSelect(){
+    try{
+        const snap = await getDocs(collection(db, COL_BACKUPS));
+        const backups = snap.docs.map(d=>({id:d.id,...d.data()})).sort((a,b)=>{
+            const da = new Date(b.fecha || b.createdAt || b.createdAt || b.fechaDia || 0);
+            const dbt = new Date(a.fecha || a.createdAt || a.createdAt || a.fechaDia || 0);
+            return da - dbt;
+        });
+        const sel = $('select-backups'); if(!sel) return;
+        sel.innerHTML = '<option value="">-- seleccionar backup --</option>' + backups.map(b=>{
+            const label = b.fecha ? new Date(b.fecha).toLocaleString() : (b.fechaDia? `${b.fechaDia} (día)` : (b.createdAt? new Date(b.createdAt).toLocaleString() : b.id));
+            return `<option value="${b.id}">${label}</option>`;
+        }).join('');
+    }catch(err){ console.warn('No se pudieron cargar backups', err); }
+}
+
+async function viewSelectedBackup(){
+    const sel = $('select-backups'); if(!sel) return showToast('Seleccione un backup', 'error');
+    const id = sel.value; if(!id) return showToast('Seleccione un backup', 'error');
+    try{
+        const snap = await getDocs(collection(db, COL_BACKUPS));
+        const docFound = snap.docs.find(d=>d.id===id);
+        if(!docFound) return showToast('Backup no encontrado', 'error');
+        const data = docFound.data();
+        $('backup-content').innerText = JSON.stringify(data, null, 2);
+        $('backup-console').classList.remove('hidden');
+    }catch(err){ showToast('Error cargando backup: '+err.message, 'error'); }
+}
+
+function downloadDisplayedBackup(){
+    const sel = $('select-backups'); const id = sel && sel.value;
+    if(id){ window.downloadBackup(id); return; }
+    const pre = $('backup-content'); if(!pre || !pre.innerText) return showToast('No hay backup cargado', 'error');
+    const blob = new Blob([pre.innerText], {type:'application/json'});
+    const a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = `backup-selected.json`; a.click();
+}
+
 async function renderBackupHistory() {
     const snap = await getDocs(collection(db, COL_BACKUPS));
-    const backups = snap.docs.map(d=>({id:d.id,...d.data()})).sort((a,b)=> new Date(b.fecha)-new Date(a.fecha));
+    const backups = snap.docs.map(d=>({id:d.id,...d.data()})).sort((a,b)=> new Date(b.fecha || b.createdAt || b.fechaDia || 0)-new Date(a.fecha || a.createdAt || a.fechaDia || 0));
     $('backup-history').innerHTML = backups.map(b=>`
         <div class="backup-item card">
-            <div><strong>${new Date(b.fecha).toLocaleString()}</strong> - ${b.tipo}</div>
-            <div>Productos: ${b.productos?.length || 0} | Ventas: ${b.ventas?.length || 0}</div>
+            <div><strong>${b.fecha? new Date(b.fecha).toLocaleString() : (b.fechaDia? b.fechaDia : (b.createdAt? new Date(b.createdAt).toLocaleString() : b.id))}</strong> - ${b.tipo}</div>
+            <div>Productos: ${b.productos?.length || b.productosSnapshot?.length || 0} | Ventas: ${b.ventas?.length || b.ventasDia?.length || 0}</div>
             <button onclick='window.downloadBackup("${b.id}")'>Descargar</button>
         </div>`).join('') || '<div class="empty-state">No hay backups</div>';
+    await loadBackupsSelect();
 }
 
 window.downloadBackup = async function(id) {
@@ -362,7 +523,7 @@ async function handleRestore(e) {
     reader.onload = async (event) => {
         try {
             const backup = JSON.parse(event.target.result);
-            if(!confirm(`¿Restaurar ${backup.productos.length} productos y ${backup.ventas.length} ventas? Esto sobreescribirá datos.`)) return;
+            if(!confirm(`¿Restaurar ${backup.productos.length || backup.productosSnapshot?.length || 0} productos y ${backup.ventas.length || backup.ventasDia?.length || 0} ventas? Esto sobreescribirá datos.`)) return;
             setLoading(true);
             showToast("Restauración manual desde JSON. Implementar con batch si querés.", 'error');
         } catch(err) { showToast("Archivo inválido", 'error'); }
@@ -381,44 +542,11 @@ async function renderCaja(){
         if(unsubscribeVentas) unsubscribeVentas();
         unsubscribeVentas = onSnapshot(collection(db, COL_VENTAS), snap => {
             const ventas = snap.docs.map(d=>({ id: d.id, ...d.data()})).sort((a,b)=>{ const da = a.fecha && a.fecha.toDate ? a.fecha.toDate() : new Date(a.fecha); const dbt = b.fecha && b.fecha.toDate ? b.fecha.toDate() : new Date(b.fecha); return dbt - da; });
+            lastVentasCache = ventas;
             renderCajaData(ventas);
         }, err => { showToast('Error cargando ventas: '+err.message,'error'); });
     }catch(err){ showToast('Error: '+err.message,'error'); }
     finally{ setLoading(false); }
 }
 
-function renderCajaData(ventas){
-    const now = new Date();
-    let totalHoy=0, totalSemana=0, totalMes=0;
-    const listEl = $('caja-list'); if(!listEl) return;
-    const q = $('search-caja')?.value?.toLowerCase()?.trim();
-    const filtered = ventas.filter(v=>{
-        if(!q) return true;
-        if(v.id.toLowerCase().includes(q)) return true;
-        if(v.items && v.items.some(it=> (it.nombre||'').toLowerCase().includes(q) || (it.id||'').toLowerCase().includes(q))) return true;
-        const sdate = v.fecha && v.fecha.toDate ? v.fecha.toDate().toLocaleString() : (v.fecha? new Date(v.fecha).toLocaleString() : '');
-        return sdate.toLowerCase().includes(q);
-    });
-    const itemsHtml = filtered.map(v=>{
-        const date = v.fecha && v.fecha.toDate ? v.fecha.toDate() : (v.fecha? new Date(v.fecha) : new Date());
-        const fechaStr = formatDateTime(date);
-        const total = v.total || (v.items? v.items.reduce((a,i)=>a + (i.precio||0)*(i.cantidad||1),0):0);
-        // accumulate
-        const startOfToday = new Date(now.getFullYear(), now.getMonth(), now.getDate());
-        const startOfWeek = new Date(now.getFullYear(), now.getMonth(), now.getDate() - 6); // last 7 days
-        const startOfMonth = new Date(now.getFullYear(), now.getMonth(), 1);
-        if(date >= startOfToday) totalHoy += total;
-        if(date >= startOfWeek) totalSemana += total;
-        if(date >= startOfMonth) totalMes += total;
-        const itemsHtml = (v.items||[]).map(it=>`<div style="display:flex;justify-content:space-between;padding:4px 0;border-bottom:1px dashed var(--border)"><div><strong>${it.nombre}</strong><div class="code">${it.id}</div></div><div>${it.cantidad} × ${formatPrice(it.precio)}</div></div>`).join('');
-        return `
-            <div class="card" style="margin-bottom:0.75rem">
-                <div style="display:flex;justify-content:space-between;align-items:center"><div><strong>Venta ${v.id}</strong><div style="color:var(--text-light);font-size:0.85rem">${fechaStr}</div></div><div style="font-weight:700">${formatPrice(total)}</div></div>
-                <div style="margin-top:0.75rem">${itemsHtml}</div>
-            </div>`;
-    }).join('') || '<div class="empty-state">No hay ventas</div>';
-    listEl.innerHTML = itemsHtml;
-    $('fact-hoy').innerText = formatPrice(totalHoy);
-    $('fact-semana').innerText = formatPrice(totalSemana);
-    $('fact-mes').innerText = formatPrice(totalMes);
-}
+// renderCajaData is implemented in sales.js and imported at top of this file

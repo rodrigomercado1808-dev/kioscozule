@@ -4,6 +4,8 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
     <title>Kiosco Zule</title>
+    <link rel="manifest" href="/manifest.json">
+    <meta name="theme-color" content="#4f46e5">
     <link rel="stylesheet" href="styles.css">
     <script src="https://unpkg.com/lucide@latest"></script>
     <script src="https://cdn.jsdelivr.net/npm/@ericblade/quagga2/dist/quagga.min.js"></script>
@@ -16,6 +18,7 @@
         <div class="container header-flex">
                 <h1>Kiosco <span>Zule</span></h1>
                 <button id="btn-menu" class="hamburger" aria-label="Abrir menú">☰</button>
+                <button id="btn-install" class="btn-secondary hidden" title="Instalar app">Instalar</button>
                 <nav id="main-nav" class="main-nav">
                     <button id="btn-ventas" class="nav-btn active">Ventas</button>
                     <button id="btn-inventario" class="nav-btn">Inventario</button>
@@ -35,6 +38,7 @@
                     <input type="text" id="search-venta" placeholder="Nombre, código o precio...">
                         <div id="search-results" class="search-results hidden" aria-live="polite"></div>
                 </div>
+                <button id="btn-start-day" class="btn-secondary" title="Iniciar día"><i data-lucide="play-circle"></i> Iniciar día</button>
                 <button id="btn-manual-add" class="btn-secondary" title="Agregar manualmente"><i data-lucide="plus"></i></button>
                 <button id="btn-scan-venta" class="btn-primary" title="Escanear"><i data-lucide="camera"></i></button>
             </div>
@@ -69,14 +73,45 @@
                     <i data-lucide="search"></i>
                     <input type="text" id="search-caja" placeholder="Buscar ventas por id, producto o fecha...">
                 </div>
-                <button id="btn-refresh-caja" class="btn-secondary"><i data-lucide="refresh-cw"></i> Refrescar</button>
+                <div class="filters">
+                    <button id="filter-today" class="btn-secondary">Hoy</button>
+                    <button id="filter-week" class="btn-secondary">Semana</button>
+                    <button id="filter-month" class="btn-secondary">Mes</button>
+                    <label style="display:flex;align-items:center;gap:6px"><span class="label">Desde</span><input type="date" id="filter-from"></label>
+                    <label style="display:flex;align-items:center;gap:6px"><span class="label">Hasta</span><input type="date" id="filter-to"></label>
+                    <select id="filter-sort" class="btn-secondary">
+                        <option value="date_desc">Fecha ↓</option>
+                        <option value="date_asc">Fecha ↑</option>
+                        <option value="total_desc">Total ↓</option>
+                        <option value="total_asc">Total ↑</option>
+                        <option value="code_asc">Código ↑</option>
+                    </select>
+                    <button id="btn-refresh-caja" class="btn-secondary"><i data-lucide="refresh-cw"></i> Refrescar</button>
+                    <button id="btn-save-day" class="btn-primary"><i data-lucide="save"></i> Guardar día</button>
+                    <button id="btn-end-day" class="btn-danger"><i data-lucide="check-circle"></i> Finalizar día</button>
+                </div>
             </div>
             <div class="card">
                 <div class="summary-row"><span>Hoy:</span><span id="fact-hoy">$0.00</span></div>
                 <div class="summary-row"><span>Semana:</span><span id="fact-semana">$0.00</span></div>
                 <div class="summary-row"><span>Mes:</span><span id="fact-mes">$0.00</span></div>
             </div>
+            <div style="display:flex;align-items:center;gap:12px;margin:12px 0">
+                <label style="margin:0">Backups:</label>
+                <select id="select-backups"><option value="">-- seleccionar backup --</option></select>
+                <button id="btn-load-backup" class="btn-secondary">Ver backup</button>
+                <button id="btn-download-backup" class="btn-ghost">Descargar JSON</button>
+            </div>
             <div id="caja-list" class="card-list"></div>
+            <div id="backup-console" class="backup-console hidden card" style="margin-top:12px;padding:12px">
+                <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
+                    <strong>Backup Console</strong>
+                    <div>
+                        <button id="btn-hide-backup-console" class="btn-text">Ocultar</button>
+                    </div>
+                </div>
+                <pre id="backup-content" class="backup-content" style="max-height:320px;overflow:auto;background:#111;color:#0f0;padding:8px;border-radius:4px"></pre>
+            </div>
         </section>
 
         <section id="section-backups" class="hidden">
@@ -140,6 +175,8 @@
     <div id="camera-overlay" class="modal hidden">
         <div class="camera-container">
             <div id="interactive" class="viewport"></div>
+            <div class="scan-frame"></div>
+            <div class="scan-line"></div>
             <button id="btn-close-camera" class="btn-close">&times;</button>
             <div class="scan-guide">Escaneando...</div>
         </div>
