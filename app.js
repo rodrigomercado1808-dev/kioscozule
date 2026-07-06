@@ -1,26 +1,17 @@
 import { db } from './firebase.js';
 import { collection, addDoc, updateDoc, deleteDoc, doc, onSnapshot, getDocs, runTransaction, serverTimestamp, query } from "https://www.gstatic.com/firebasejs/10.7.1/firebase-firestore.js";
+import { $, debounce, formatPrice, showToast, setLoading } from './utils.js';
 
 const COL_PROD = "productos", COL_VENTAS = "ventas", COL_BACKUPS = "backups";
 const STOCK_MINIMO = 5;
 let products = [], cart = [], unsubscribeProducts, isScannerRunning = false;
-
-// --- UTILS ---
-const $ = id => document.getElementById(id);
-const showToast = (msg, type='success') => {
-    const container = $('toast-container');
-    if(!container) return;
-    const t = document.createElement('div'); t.className = `toast ${type}`; t.innerText = msg;
-    container.appendChild(t); setTimeout(() => t.remove(), 4000);
-};
-const setLoading = (state) => { const l = $('loader'); if(l) l.classList.toggle('hidden',!state); };
-const debounce = (fn, delay) => { let t; return (...a) => { clearTimeout(t); t = setTimeout(() => fn(...a), delay); }};
-const formatPrice = n => `$${parseFloat(n || 0).toFixed(2)}`;
+let unsubscribeVentas = null;
 
 // --- EVENTOS ---
 function setupEventListeners() {
     $('btn-ventas').onclick = () => switchSection('ventas');
     $('btn-inventario').onclick = () => switchSection('inventario');
+    $('btn-caja').onclick = () => switchSection('caja');
     $('btn-backups').onclick = () => switchSection('backups');
     $('search-inventario').oninput = debounce(renderInventory, 300);
     // Enhanced search with suggestions and human confirmation
@@ -100,6 +91,7 @@ function setupEventListeners() {
     $('btn-backup-manual').onclick = () => createBackup('manual');
     $('btn-restore').onclick = () => $('file-restore').click();
     $('file-restore').onchange = handleRestore;
+    const btnRefreshCaja = $('btn-refresh-caja'); if(btnRefreshCaja) btnRefreshCaja.onclick = ()=> renderCaja();
 };
 
 // --- INIT ---
@@ -115,11 +107,12 @@ init();
 
 // --- NAV ---
 function switchSection(section) {
-    ['ventas','inventario','backups'].forEach(s => {
+    ['ventas','inventario','caja','backups'].forEach(s => {
         $(`btn-${s}`).classList.toggle('active', s === section);
         $(`section-${s}`).classList.toggle('hidden', s!== section);
     });
     if(section === 'backups') renderBackupHistory();
+    if(section === 'caja') renderCaja();
 }
 
 // --- CRUD CON VALIDACIONES ---
@@ -376,4 +369,56 @@ async function handleRestore(e) {
         finally { setLoading(false); }
     };
     reader.readAsText(file);
+}
+
+// --- CAJA / VENTAS LISTADO Y RESUMEN ---
+function formatDateTime(d){ if(!d) return '-'; try{ return d.toLocaleString(); }catch(e){ return new Date(d).toLocaleString(); } }
+
+async function renderCaja(){
+    setLoading(true);
+    try{
+        // use onSnapshot for live updates
+        if(unsubscribeVentas) unsubscribeVentas();
+        unsubscribeVentas = onSnapshot(collection(db, COL_VENTAS), snap => {
+            const ventas = snap.docs.map(d=>({ id: d.id, ...d.data()})).sort((a,b)=>{ const da = a.fecha && a.fecha.toDate ? a.fecha.toDate() : new Date(a.fecha); const dbt = b.fecha && b.fecha.toDate ? b.fecha.toDate() : new Date(b.fecha); return dbt - da; });
+            renderCajaData(ventas);
+        }, err => { showToast('Error cargando ventas: '+err.message,'error'); });
+    }catch(err){ showToast('Error: '+err.message,'error'); }
+    finally{ setLoading(false); }
+}
+
+function renderCajaData(ventas){
+    const now = new Date();
+    let totalHoy=0, totalSemana=0, totalMes=0;
+    const listEl = $('caja-list'); if(!listEl) return;
+    const q = $('search-caja')?.value?.toLowerCase()?.trim();
+    const filtered = ventas.filter(v=>{
+        if(!q) return true;
+        if(v.id.toLowerCase().includes(q)) return true;
+        if(v.items && v.items.some(it=> (it.nombre||'').toLowerCase().includes(q) || (it.id||'').toLowerCase().includes(q))) return true;
+        const sdate = v.fecha && v.fecha.toDate ? v.fecha.toDate().toLocaleString() : (v.fecha? new Date(v.fecha).toLocaleString() : '');
+        return sdate.toLowerCase().includes(q);
+    });
+    const itemsHtml = filtered.map(v=>{
+        const date = v.fecha && v.fecha.toDate ? v.fecha.toDate() : (v.fecha? new Date(v.fecha) : new Date());
+        const fechaStr = formatDateTime(date);
+        const total = v.total || (v.items? v.items.reduce((a,i)=>a + (i.precio||0)*(i.cantidad||1),0):0);
+        // accumulate
+        const startOfToday = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+        const startOfWeek = new Date(now.getFullYear(), now.getMonth(), now.getDate() - 6); // last 7 days
+        const startOfMonth = new Date(now.getFullYear(), now.getMonth(), 1);
+        if(date >= startOfToday) totalHoy += total;
+        if(date >= startOfWeek) totalSemana += total;
+        if(date >= startOfMonth) totalMes += total;
+        const itemsHtml = (v.items||[]).map(it=>`<div style="display:flex;justify-content:space-between;padding:4px 0;border-bottom:1px dashed var(--border)"><div><strong>${it.nombre}</strong><div class="code">${it.id}</div></div><div>${it.cantidad} × ${formatPrice(it.precio)}</div></div>`).join('');
+        return `
+            <div class="card" style="margin-bottom:0.75rem">
+                <div style="display:flex;justify-content:space-between;align-items:center"><div><strong>Venta ${v.id}</strong><div style="color:var(--text-light);font-size:0.85rem">${fechaStr}</div></div><div style="font-weight:700">${formatPrice(total)}</div></div>
+                <div style="margin-top:0.75rem">${itemsHtml}</div>
+            </div>`;
+    }).join('') || '<div class="empty-state">No hay ventas</div>';
+    listEl.innerHTML = itemsHtml;
+    $('fact-hoy').innerText = formatPrice(totalHoy);
+    $('fact-semana').innerText = formatPrice(totalSemana);
+    $('fact-mes').innerText = formatPrice(totalMes);
 }
