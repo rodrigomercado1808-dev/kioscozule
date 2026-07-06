@@ -1,5 +1,5 @@
 import { initializeApp } from "https://www.gstatic.com/firebasejs/10.7.1/firebase-app.js";
-import { getFirestore, CACHE_SIZE_UNLIMITED, persistentLocalCache, persistentSingleTabManager } from "https://www.gstatic.com/firebasejs/10.7.1/firebase-firestore.js";
+import { getFirestore } from "https://www.gstatic.com/firebasejs/10.7.1/firebase-firestore.js";
 
 const firebaseConfig = {
   apiKey: "AIzaSyC8JlyrUvdTZUhdeBuevdWvmtx9i0kQchE",
@@ -10,33 +10,14 @@ const firebaseConfig = {
   appId: "1:150191540806:web:f50951ecc401c1f78f1847"
 };
 
-const validateConfig = (config) => {
-    for (const key in config) {
-        if (!config[key]) throw new Error(`Configuración de Firebase inválida: ${key} está vacío.`);
-    }
-};
-
-let app, db;
-try {
-    validateConfig(firebaseConfig);
-    app = initializeApp(firebaseConfig);
-
-    // FORMA CORRECTA: getFirestore recibe solo app. El cache se setea aparte
-    db = getFirestore(app);
-    db._settings = { // Hack temporal hasta que Firebase arregle los exports
-        localCache: persistentLocalCache({
-            cacheSizeBytes: CACHE_SIZE_UNLIMITED,
-            tabManager: persistentSingleTabManager()
-        })
-    };
-
-} catch (error) {
-    const errorDiv = document.getElementById('firebase-error');
-    if(errorDiv) {
-        errorDiv.classList.remove('hidden');
-        errorDiv.innerHTML = `<h3>Error de Configuración</h3><p>${error.message}</p>`;
-    }
-    console.error(error);
+// Validación simple
+if (!firebaseConfig.projectId) {
+    document.getElementById('firebase-error').classList.remove('hidden');
+    document.getElementById('firebase-error').innerText = "Error: Falta projectId en Firebase Config";
+    throw new Error("Firebase config inválida");
 }
+
+const app = initializeApp(firebaseConfig);
+const db = getFirestore(app); // SIN SEGUNDO PARAMETRO. Así no rompe
 
 export { db };
