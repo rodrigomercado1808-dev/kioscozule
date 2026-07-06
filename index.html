@@ -14,12 +14,13 @@
 
     <header>
         <div class="container header-flex">
-            <h1>Kiosco <span>Pro</span></h1>
-            <nav>
-                <button id="btn-ventas" class="nav-btn active">Ventas</button>
-                <button id="btn-inventario" class="nav-btn">Inventario</button>
-                <button id="btn-backups" class="nav-btn">Backups</button>
-            </nav>
+                <h1>Kiosco <span>Pro</span></h1>
+                <button id="btn-menu" class="hamburger" aria-label="Abrir menú">☰</button>
+                <nav id="main-nav" class="main-nav">
+                    <button id="btn-ventas" class="nav-btn active">Ventas</button>
+                    <button id="btn-inventario" class="nav-btn">Inventario</button>
+                    <button id="btn-backups" class="nav-btn">Backups</button>
+                </nav>
         </div>
     </header>
 
@@ -31,7 +32,9 @@
                 <div class="search-box">
                     <i data-lucide="search"></i>
                     <input type="text" id="search-venta" placeholder="Nombre, código o precio...">
+                        <div id="search-results" class="search-results hidden" aria-live="polite"></div>
                 </div>
+                <button id="btn-manual-add" class="btn-secondary" title="Agregar manualmente"><i data-lucide="plus"></i></button>
                 <button id="btn-scan-venta" class="btn-primary" title="Escanear"><i data-lucide="camera"></i></button>
             </div>
             <div class="cart-container card">
@@ -68,6 +71,18 @@
     </main>
 
     <div id="modal-product" class="modal hidden">
+
+        <div id="modal-scan-confirm" class="modal hidden">
+            <div class="modal-content card">
+                <h3 id="scan-modal-title">Producto escaneado</h3>
+                <div id="scan-modal-body"></div>
+                <div class="modal-actions">
+                    <button type="button" id="scan-modal-cancel" class="btn-secondary">Cancelar</button>
+                    <button type="button" id="scan-modal-add" class="btn-primary">Agregar al carrito</button>
+                    <button type="button" id="scan-modal-create" class="btn-icon hidden">Crear producto</button>
+                </div>
+            </div>
+        </div>
         <div class="modal-content card">
             <h3 id="modal-title">Producto</h3>
             <form id="form-product">
@@ -89,6 +104,19 @@
                     <button type="submit" class="btn-primary">Guardar</button>
                 </div>
             </form>
+        </div>
+    </div>
+    <div id="modal-quick-add" class="modal hidden">
+        <div class="modal-content card">
+            <h3>Agregar producto</h3>
+            <div class="form-group">
+                <label>Buscar producto</label>
+                <input type="text" id="quick-search" placeholder="Buscar por nombre o código...">
+            </div>
+            <div id="quick-product-list" class="quick-list"></div>
+            <div class="modal-actions">
+                <button type="button" id="quick-cancel" class="btn-secondary">Cerrar</button>
+            </div>
         </div>
     </div>
 

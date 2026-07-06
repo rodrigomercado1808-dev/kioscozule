@@ -28,9 +28,22 @@ body {
 }
 
 .container {
-    max-width: 800px;
+    max-width: 1100px;
     margin: 0 auto;
     padding: 0 1rem;
+}
+
+.hamburger {
+    display: none;
+    background: transparent;
+    border: none;
+    font-size: 1.5rem;
+    cursor: pointer;
+}
+
+.main-nav {
+    display: flex;
+    gap: 0.5rem;
 }
 
 header {
@@ -110,6 +123,35 @@ nav {
 .search-box input:focus {
     border-color: var(--primary);
 }
+
+.search-results {
+    position: absolute;
+    top: calc(100% + 0.5rem);
+    left: 0;
+    right: 0;
+    background: white;
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    box-shadow: var(--shadow);
+    z-index: 60;
+    max-height: 240px;
+    overflow-y: auto;
+}
+.search-results .item { padding: 0.6rem 0.8rem; cursor: pointer; }
+.search-results .item:hover { background: #f1f5f9; }
+
+/* stronger visual styles for cards and buttons */
+.card { transition: transform 0.12s, box-shadow 0.12s; }
+.card:hover { transform: translateY(-4px); box-shadow: 0 8px 20px rgba(15,23,42,0.08); }
+
+.quick-list { max-height: 320px; overflow-y: auto; border: 1px solid var(--border); border-radius: 8px; padding: 0.5rem; }
+.quick-list .quick-item { display:flex; justify-content:space-between; align-items:center; padding:0.5rem; border-radius:6px; margin-bottom:0.4rem; }
+.quick-list .quick-item:hover { background: #f8fafc; }
+.quick-list .quick-item .meta { font-size: 0.95rem; color: var(--text); }
+.quick-list .quick-item .meta .code { font-family: monospace; color: var(--text-light); margin-left:0.5rem; }
+.quick-list .quick-item .actions { display:flex; gap:0.5rem; }
+.qty-box { display:flex; align-items:center; gap:0.5rem; margin-left:0.5rem; }
+.qty-input { padding:6px; border-radius:6px; border:1px solid var(--border); width:80px; }
 
 .card {
     background: var(--card-bg);
@@ -323,7 +365,10 @@ footer {
 .empty-state { text-align: center; padding: 2rem; color: var(--text-light); }
 
 @media (max-width: 600px) {
-    .header-flex { flex-direction: column; gap: 1rem; }
+    .header-flex { flex-direction: row; gap: 1rem; align-items: center; }
+    .main-nav { display: none; }
+    .hamburger { display: block; }
     .action-bar { flex-wrap: wrap; }
     .btn-primary { flex: 1; }
+    .container { padding: 0 0.75rem; }
 }

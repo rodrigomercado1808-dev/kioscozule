@@ -23,12 +23,30 @@ function setupEventListeners() {
     $('btn-inventario').onclick = () => switchSection('inventario');
     $('btn-backups').onclick = () => switchSection('backups');
     $('search-inventario').oninput = debounce(renderInventory, 300);
-    $('search-venta').oninput = debounce(() => {
-        const val = $('search-venta').value.toLowerCase().trim();
-        if(!val) return;
-        const product = products.find(p => p.codigo === val || p.nombre.toLowerCase().includes(val) || p.precio.toString().includes(val));
-        if(product) { addToCart(product); $('search-venta').value = ''; }
-    }, 500);
+    // Enhanced search with suggestions and human confirmation
+    const searchVenta = $('search-venta');
+    const searchResults = $('search-results');
+    searchVenta.oninput = debounce(() => {
+        const val = searchVenta.value.toLowerCase().trim();
+        if(!val) { searchResults.classList.add('hidden'); return; }
+        // fuzzy-ish matching: startsWith for code, includes for name
+        const matches = products.filter(p => p.codigo.toLowerCase().startsWith(val) || p.nombre.toLowerCase().includes(val) || p.precio.toString().includes(val));
+        if(matches.length === 0) { searchResults.innerHTML = `<div class="item">No se encontraron coincidencias</div>`; searchResults.classList.remove('hidden'); return; }
+        searchResults.innerHTML = matches.slice(0,10).map(p=>`<div class="item" data-id="${p.id}"><strong>${p.nombre}</strong> <span class="code">${p.codigo}</span> <span style="float:right">${formatPrice(p.precio)}</span></div>`).join('');
+        lucide.createIcons && lucide.createIcons();
+        searchResults.classList.remove('hidden');
+    }, 250);
+    // click handler for suggestion items
+    searchResults.addEventListener('click', (ev) => {
+        const el = ev.target.closest('.item'); if(!el) return;
+        const id = el.dataset.id; const product = products.find(p=>p.id===id);
+        if(!product) return showToast('Producto no encontrado','error');
+        // require user confirmation before adding
+        if(confirm(`Agregar ${product.nombre} al carrito? (Stock: ${product.stock})`)) addToCart(product);
+        searchVenta.value = ''; searchResults.classList.add('hidden');
+    });
+    // hide suggestions on outside click
+    document.addEventListener('click', e=>{ if(!e.target.closest('.search-box')) searchResults.classList.add('hidden'); });
     $('btn-add-product').onclick = () => { $('modal-title').innerText = "Nuevo Producto"; $('modal-product').classList.remove('hidden'); };
     $('btn-cancel').onclick = closeModal;
     $('form-product').onsubmit = saveProduct;
@@ -37,6 +55,39 @@ function setupEventListeners() {
     $('btn-scan-venta').onclick = () => startScanner('venta');
     $('btn-scan-modal').onclick = () => startScanner('modal');
     $('btn-close-camera').onclick = stopScanner;
+    // Quick manual add (ventas)
+    const btnManual = $('btn-manual-add'); if(btnManual) btnManual.onclick = openQuickAddModal;
+    const quickCancel = $('quick-cancel'); if(quickCancel) quickCancel.onclick = closeQuickAddModal;
+    const quickSearch = $('quick-search'); if(quickSearch) quickSearch.oninput = debounce(()=> renderQuickList(quickSearch.value.trim().toLowerCase()), 200);
+    const quickList = $('quick-product-list'); if(quickList) quickList.addEventListener('click', (ev)=>{
+        const btn = ev.target.closest('[data-action]'); if(!btn) return; const id = btn.getAttribute('data-id') || btn.dataset.id;
+        const action = btn.getAttribute('data-action'); if(!id) return;
+        const product = products.find(p=>p.id===id); if(!product) return showToast('Producto no encontrado','error');
+        if(action === 'add'){
+            const itemEl = btn.closest('.quick-item');
+            if(!itemEl) return;
+            // if qty box already exists, do nothing
+            if(itemEl.querySelector('.qty-box')) return;
+            const qtyBox = document.createElement('div'); qtyBox.className = 'qty-box';
+            qtyBox.innerHTML = `
+                <input type="number" class="qty-input" min="1" max="${product.stock}" value="1" style="width:80px;margin-right:8px;padding:6px;border-radius:6px;border:1px solid var(--border)">
+                <button class="btn-primary qty-confirm">Agregar</button>
+                <button class="btn-secondary qty-cancel">Cancelar</button>
+            `;
+            itemEl.querySelector('.actions').appendChild(qtyBox);
+            const confirmBtn = qtyBox.querySelector('.qty-confirm');
+            const cancelBtn = qtyBox.querySelector('.qty-cancel');
+            const input = qtyBox.querySelector('.qty-input');
+            confirmBtn.onclick = ()=>{
+                const qty = parseInt(input.value);
+                if(isNaN(qty) || qty <= 0) return showToast('Cantidad inválida','error');
+                if(qty > product.stock) return showToast(`Stock insuficiente. Disponible: ${product.stock}`,'error');
+                addToCartWithQty(product, qty);
+                qtyBox.remove();
+            };
+            cancelBtn.onclick = ()=> qtyBox.remove();
+        }
+    });
     $('btn-backup-manual').onclick = () => createBackup('manual');
     $('btn-restore').onclick = () => $('file-restore').click();
     $('file-restore').onchange = handleRestore;
@@ -119,7 +170,7 @@ function renderInventory() {
     const filter = $('search-inventario').value.toLowerCase();
     const filtered = products.filter(p =>
         p.nombre.toLowerCase().includes(filter) ||
-        p.codigo.includes(filter) ||
+        p.codigo.toLowerCase().includes(filter) ||
         p.precio.toString().includes(filter)
     );
     $('inventory-list').innerHTML = filtered.map(p => `
@@ -138,12 +189,35 @@ function renderInventory() {
 // --- VENTAS ---
 function addToCart(product) {
     if(product.stock <= 0) return showToast("Sin stock", 'error');
+    // Prevent duplicate items added by scans: user must confirm
     const existing = cart.find(item => item.id === product.id);
     if(existing) {
         if(existing.cantidad >= product.stock) return showToast("Stock máximo alcanzado", 'error');
         existing.cantidad++;
     } else cart.push({...product, cantidad: 1 });
     renderCart();
+}
+
+function addToCartWithQty(product, qty){
+    if(product.stock <= 0) return showToast('Sin stock','error');
+    const existing = cart.find(i=>i.id===product.id);
+    const totalRequested = (existing? existing.cantidad : 0) + qty;
+    if(totalRequested > product.stock) return showToast(`Stock insuficiente. Disponible: ${product.stock}`,'error');
+    if(existing) existing.cantidad = totalRequested;
+    else cart.push({...product, cantidad: qty});
+    renderCart(); showToast(`${product.nombre} agregado (x${qty})`);
+}
+
+function openQuickAddModal(){ renderQuickList(''); $('modal-quick-add').classList.remove('hidden'); const q = $('quick-search'); q && q.focus(); }
+function closeQuickAddModal(){ $('modal-quick-add').classList.add('hidden'); const q = $('quick-search'); if(q) { q.value = ''; } const list = $('quick-product-list'); if(list) list.innerHTML = ''; }
+
+function renderQuickList(filter=''){
+    const f = (filter||'').toLowerCase();
+    const filtered = products.filter(p => p.nombre.toLowerCase().includes(f) || p.codigo.toLowerCase().includes(f));
+    const container = $('quick-product-list');
+    if(!container) return;
+    container.innerHTML = filtered.map(p=>`<div class="quick-item"><div class="meta"><strong>${p.nombre}</strong><span class="code">${p.codigo}</span><div style="color:var(--text-light)">${formatPrice(p.precio)} · Stock: ${p.stock}</div></div><div class="actions"><button class="btn-primary" data-action="add" data-id="${p.id}">Agregar</button></div></div>`).join('') || '<div class="empty-state">No hay productos</div>';
+    lucide.createIcons && lucide.createIcons();
 }
 
 window.updateCartQty = function(id, delta) {
@@ -210,11 +284,29 @@ function startScanner(target) {
         const code = data.codeResult.code;
         if(navigator.vibrate) navigator.vibrate(200);
         stopScanner();
-        if(target === 'modal') $('prod-code').value = code;
-        else {
+        if(target === 'modal') {
+            // fill code but require user to press guardar
+            $('prod-code').value = code;
+        } else {
             const product = products.find(p => p.codigo === code);
-            if(product) addToCart(product);
-            else if(confirm("No existe. ¿Crear producto?")) { switchSection('inventario'); $('btn-add-product').click(); $('prod-code').value = code; }
+            // Show scan confirmation modal to avoid automatic actions
+            const scanModal = $('modal-scan-confirm');
+            const body = $('scan-modal-body');
+            const addBtn = $('scan-modal-add');
+            const createBtn = $('scan-modal-create');
+            const cancelBtn = $('scan-modal-cancel');
+            if(product) {
+                body.innerHTML = `<p><strong>${product.nombre}</strong><br>Código: ${product.codigo}<br>Precio: ${formatPrice(product.precio)}<br>Stock: ${product.stock}</p>`;
+                createBtn.classList.add('hidden');
+                addBtn.onclick = ()=>{ if(confirm(`Confirmar agregar ${product.nombre}?`)) addToCart(product); scanModal.classList.add('hidden'); };
+            } else {
+                body.innerHTML = `<p>No existe producto con código <strong>${code}</strong>.</p><p>¿Deseas crear uno manualmente?</p>`;
+                createBtn.classList.remove('hidden');
+                addBtn.onclick = ()=>{ showToast('No hay producto para agregar', 'error'); };
+                createBtn.onclick = ()=>{ scanModal.classList.add('hidden'); switchSection('inventario'); $('btn-add-product').click(); $('prod-code').value = code; };
+            }
+            cancelBtn.onclick = ()=> scanModal.classList.add('hidden');
+            scanModal.classList.remove('hidden');
         }
     }
 }
