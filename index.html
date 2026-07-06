@@ -3,47 +3,45 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>Kiosco Inteligente</title>
+    <title>Kiosco Pro</title>
     <link rel="stylesheet" href="styles.css">
     <script src="https://unpkg.com/lucide@latest"></script>
     <script src="https://cdn.jsdelivr.net/npm/@ericblade/quagga2/dist/quagga.min.js"></script>
 </head>
 <body>
+    <div id="loader" class="loader hidden"><div class="spinner"></div></div>
+    <div id="toast-container"></div>
+
     <header>
         <div class="container header-flex">
             <h1>Kiosco <span>Pro</span></h1>
             <nav>
                 <button id="btn-ventas" class="nav-btn active">Ventas</button>
                 <button id="btn-inventario" class="nav-btn">Inventario</button>
+                <button id="btn-backups" class="nav-btn">Backups</button>
             </nav>
         </div>
     </header>
 
     <main class="container">
+        <div id="firebase-error" class="card error-card hidden"></div>
+
         <section id="section-ventas">
             <div class="action-bar">
                 <div class="search-box">
                     <i data-lucide="search"></i>
-                    <input type="text" id="search-venta" placeholder="Nombre o código...">
+                    <input type="text" id="search-venta" placeholder="Nombre, código o precio...">
                 </div>
-                <button id="btn-scan-venta" class="btn-primary">
-                    <i data-lucide="camera"></i>
-                </button>
+                <button id="btn-scan-venta" class="btn-primary" title="Escanear"><i data-lucide="camera"></i></button>
             </div>
-
             <div class="cart-container card">
                 <div class="cart-header">
                     <h2>Carrito</h2>
                     <button id="btn-clear-cart" class="btn-text">Vaciar</button>
                 </div>
-                <div id="cart-items" class="cart-list">
-                    <div class="empty-state">Carrito vacío</div>
-                </div>
+                <div id="cart-items" class="cart-list"><div class="empty-state">Carrito vacío</div></div>
                 <div class="cart-summary">
-                    <div class="summary-row">
-                        <span>Total:</span>
-                        <span id="cart-total" class="total-price">$0.00</span>
-                    </div>
+                    <div class="summary-row"><span>Total:</span><span id="cart-total" class="total-price">$0.00</span></div>
                     <button id="btn-checkout" class="btn-success btn-block" disabled>Confirmar Venta</button>
                 </div>
             </div>
@@ -55,11 +53,17 @@
                     <i data-lucide="search"></i>
                     <input type="text" id="search-inventario" placeholder="Filtrar productos...">
                 </div>
-                <button id="btn-add-product" class="btn-primary">
-                    <i data-lucide="plus"></i>
-                </button>
+                <button id="btn-add-product" class="btn-primary"><i data-lucide="plus"></i></button>
+                <button id="btn-backup-manual" class="btn-secondary"><i data-lucide="download"></i> Backup</button>
             </div>
             <div id="inventory-list" class="card-grid"></div>
+        </section>
+
+        <section id="section-backups" class="hidden">
+            <h2>Historial de Backups</h2>
+            <button id="btn-restore" class="btn-secondary"><i data-lucide="upload"></i> Restaurar desde JSON</button>
+            <input type="file" id="file-restore" accept=".json" class="hidden">
+            <div id="backup-history" class="card-list"></div>
         </section>
     </main>
 
@@ -69,25 +73,16 @@
             <form id="form-product">
                 <input type="hidden" id="prod-id">
                 <div class="form-group">
-                    <label>Código de Barras</label>
+                    <label>Código de Barras *</label>
                     <div class="input-with-action">
                         <input type="text" id="prod-code" required>
                         <button type="button" id="btn-scan-modal" class="btn-icon"><i data-lucide="camera"></i></button>
                     </div>
                 </div>
-                <div class="form-group">
-                    <label>Nombre</label>
-                    <input type="text" id="prod-name" required>
-                </div>
+                <div class="form-group"><label>Nombre *</label><input type="text" id="prod-name" required></div>
                 <div class="form-row">
-                    <div class="form-group">
-                        <label>Precio ($)</label>
-                        <input type="number" id="prod-price" step="0.01" required>
-                    </div>
-                    <div class="form-group">
-                        <label>Stock</label>
-                        <input type="number" id="prod-stock" required>
-                    </div>
+                    <div class="form-group"><label>Precio ($) *</label><input type="number" id="prod-price" step="0.01" min="0" required></div>
+                    <div class="form-group"><label>Stock *</label><input type="number" id="prod-stock" min="0" required></div>
                 </div>
                 <div class="modal-actions">
                     <button type="button" id="btn-cancel" class="btn-secondary">Cancelar</button>
@@ -105,22 +100,9 @@
         </div>
     </div>
 
-    <footer>
-        <p>&copy; 2026 | Con ❤️ para mamá</p>
-    </footer>
-
+    <footer><p>&copy; 2026 | Con ❤️ para mamá</p></footer>
+    <script type="module" src="firebase.js"></script>
     <script type="module" src="app.js"></script>
-    <script>
-        // Configuración inyectada para Render
-        window.FIREBASE_CONFIG = {
-            apiKey: "RENDER_FIREBASE_API_KEY",
-            authDomain: "RENDER_FIREBASE_AUTH_DOMAIN",
-            projectId: "RENDER_FIREBASE_PROJECT_ID",
-            storageBucket: "RENDER_FIREBASE_STORAGE_BUCKET",
-            messagingSenderId: "RENDER_FIREBASE_MESSAGING_SENDER_ID",
-            appId: "RENDER_FIREBASE_APP_ID"
-        };
-        lucide.createIcons();
-    </script>
+    <script> lucide.createIcons(); </script>
 </body>
 </html>
