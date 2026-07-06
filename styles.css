@@ -371,4 +371,8 @@ footer {
     .action-bar { flex-wrap: wrap; }
     .btn-primary { flex: 1; }
     .container { padding: 0 0.75rem; }
+        .header-flex { flex-direction: row; gap: 1rem; align-items: center; position: relative; }
+        .main-nav.open { display: flex; position: absolute; top: calc(100% + 8px); right: 1rem; background: white; flex-direction: column; gap: 0; padding: 0.5rem; border-radius: 10px; box-shadow: var(--shadow); z-index: 300; min-width: 160px; }
+        .main-nav .nav-btn { width: 100%; text-align: left; padding: 0.6rem 0.9rem; border-radius: 8px; }
+        .hamburger { z-index: 350; }
 }

@@ -55,6 +55,15 @@ function setupEventListeners() {
     $('btn-scan-venta').onclick = () => startScanner('venta');
     $('btn-scan-modal').onclick = () => startScanner('modal');
     $('btn-close-camera').onclick = stopScanner;
+    // hamburger menu toggle for mobile
+    const btnMenu = $('btn-menu'); const mainNav = $('main-nav');
+    if(btnMenu && mainNav){
+        btnMenu.onclick = (e)=>{ e.stopPropagation(); const open = mainNav.classList.toggle('open'); btnMenu.setAttribute('aria-expanded', open); };
+        // close menu when clicking a nav button
+        mainNav.addEventListener('click', (ev)=>{ const b = ev.target.closest('.nav-btn'); if(b) { mainNav.classList.remove('open'); btnMenu.setAttribute('aria-expanded', false); } });
+        // close when clicking outside
+        document.addEventListener('click', (ev)=>{ if(!ev.target.closest('.header-flex') && mainNav.classList.contains('open')){ mainNav.classList.remove('open'); btnMenu.setAttribute('aria-expanded', false); } });
+    }
     // Quick manual add (ventas)
     const btnManual = $('btn-manual-add'); if(btnManual) btnManual.onclick = openQuickAddModal;
     const quickCancel = $('quick-cancel'); if(quickCancel) quickCancel.onclick = closeQuickAddModal;
