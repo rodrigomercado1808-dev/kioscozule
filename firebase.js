@@ -20,12 +20,16 @@ let app, db;
 try {
     validateConfig(firebaseConfig);
     app = initializeApp(firebaseConfig);
-    db = getFirestore(app, {
+
+    // FORMA CORRECTA: getFirestore recibe solo app. El cache se setea aparte
+    db = getFirestore(app);
+    db._settings = { // Hack temporal hasta que Firebase arregle los exports
         localCache: persistentLocalCache({
             cacheSizeBytes: CACHE_SIZE_UNLIMITED,
             tabManager: persistentSingleTabManager()
         })
-    });
+    };
+
 } catch (error) {
     const errorDiv = document.getElementById('firebase-error');
     if(errorDiv) {
